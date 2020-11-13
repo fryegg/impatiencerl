@@ -1,7 +1,8 @@
 import time
 
 import numpy as np
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 from baselines.common import explained_variance
 from baselines.common.mpi_moments import mpi_moments
 from baselines.common.running_mean_std import RunningMeanStd

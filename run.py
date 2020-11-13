@@ -8,7 +8,8 @@ import os.path as osp
 from functools import partial
 
 import gym
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 from baselines import logger
 from baselines.bench import Monitor
 from baselines.common.atari_wrappers import NoopResetEnv, FrameStack
@@ -33,6 +34,7 @@ def start_experiment(**args):
     with log, tf_sess:
         logdir = logger.get_dir()
         print("results will be saved to ", logdir)
+        print('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
         trainer.train()
 
 
@@ -108,6 +110,7 @@ class Trainer(object):
     def train(self):
         self.agent.start_interaction(self.envs, nlump=self.hps['nlumps'], dynamics=self.dynamics)
         while True:
+            #self.make_env.render()
             info = self.agent.step()
             if info['update']:
                 logger.logkvs(info['update'])

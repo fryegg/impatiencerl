@@ -1,4 +1,5 @@
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 from baselines.common.distributions import make_pdtype
 
 from utils import getsess, small_convnet, activ, fc, flatten_two_dims, unflatten_first_dim

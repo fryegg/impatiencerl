@@ -4,7 +4,8 @@ import platform
 from functools import partial
 
 import numpy as np
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 from baselines.common.tf_util import normc_initializer
 from mpi4py import MPI
 
