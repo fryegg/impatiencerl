@@ -2,8 +2,7 @@ from collections import deque, defaultdict
 
 import numpy as np
 from mpi4py import MPI
-import tensorflow.compat.v1 as tf
-tf.disable_v2_behavior()
+
 from recorder import Recorder
 
 
@@ -52,14 +51,8 @@ class Rollout(object):
 
         #########################################################
         self.ps_buf = self.int_rew = np.zeros((nenvs,), np.float32)
-        self.ps_buf_nold = self.int_rew = np.zeros((nenvs,), np.float32)
         self.ac_buf = self.int_rew = np.zeros((nenvs,), np.float32)
-        self.buf_acs_nold = np.empty((nenvs, self.nsteps, *self.ac_space.shape), self.ac_space.dtype)
-        self.ac_buf_nold = np.empty((nenvs, self.nsteps, *self.ac_space.shape), self.ac_space.dtype)
-        self.nthe = 5
-        self.ac_list = []
-        self.ps_list = []
-        self.patience = 0
+
         #########################################################
     def collect_rollout(self):
         self.ep_infos_new = []
@@ -70,41 +63,12 @@ class Rollout(object):
 
     def calculate_reward(self):
         #여기도 수정
-        ##############################################################################
-        diff = 0
-        int_rew, ps, ac = self.dynamics.calculate_loss(ob=self.buf_obs,
+        int_rew, ps_buf, ac_buf = self.dynamics.calculate_loss(ob=self.buf_obs,
                                                last_ob=self.buf_obs_last,
                                                acs=self.buf_acs)
-        self.ac_list.append(ac)
-        self.ps_list.append(ps)
-        gpu_devices = tf.config.experimental.list_physical_devices('GPU')
-        """
-        for device in gpu_devices:
-            tf.config.experimental.set_memory_growth(device, True)
-        """
-        if len(self.ac_list) > (self.nthe):
-            self.ac_list = self.ac_list[1:]
-            self.ps_list = self.ps_list[1:]
-        
-        if self.step_count/self.nsteps > self.nthe:
-            int_rew_now, ps_buf_now, ac_buf_now = self.dynamics.calculate_loss(ob=self.buf_obs,
-                                                last_ob=self.buf_obs_last,
-                                                acs=self.ac_list[0])              #ps_buf_nold S_1**
-            #diff = tf.nn.sparse_softmax_cross_entropy_with_logits(labels = self.ps_list[0],logits = ps_buf_now) # Diff Function
-            sess = tf.Session()
-            # node =tf.compat.v1.losses.mean_squared_error(self.ps_list[0], ps_buf_now)
-            cce = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-            node = tf.math.sigmoid(cce(ps_buf_now,self.ps_list[0]))
-            diff = sess.run(node)
-            #여기다가 sigmoid function넣어놔야 0하고 1사이에 잘 들어간다.
-            #diff = sess.run(node)
-            #MontezumaRevengeNoFrameskip-v4
-            self.patience = 0.9 * self.patience + 0.1 * diff
-            int_rew = int_rew * self.patience
-        print("step_count: ", int(self.step_count/self.nsteps))
-        print("reward shape: ", int_rew.shape)
-        print("patience: ", self.patience)
-        ################################################################################
+        print(int_rew.shape, ps_buf.shape, ac_buf.shape)
+        self.ps_buf = ps_buf
+        self.ac_buf = ac_buf
         self.buf_rews[:] = self.reward_fun(int_rew=int_rew, ext_rew=self.buf_ext_rews)
         
 

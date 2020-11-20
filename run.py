@@ -110,7 +110,7 @@ class Trainer(object):
     def train(self):
         self.agent.start_interaction(self.envs, nlump=self.hps['nlumps'], dynamics=self.dynamics)
         while True:
-            #self.make_env.render()
+            # self.make_env.render()
             info = self.agent.step()
             if info['update']:
                 logger.logkvs(info['update'])
@@ -193,7 +193,11 @@ def add_rollout_params(parser):
 
 if __name__ == '__main__':
     import argparse
-
+    """
+    gpu_devices = tf.config.experimental.list_physical_devices('GPU')
+    for device in gpu_devices:
+        tf.config.experimental.set_memory_growth(device, True)
+    """
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     add_environments_params(parser)
     add_optimization_params(parser)

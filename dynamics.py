@@ -18,6 +18,10 @@ class Dynamics(object):
         self.ac_space = self.auxiliary_task.ac_space
         self.ob_mean = self.auxiliary_task.ob_mean
         self.ob_std = self.auxiliary_task.ob_std
+        #############################################
+        # 여기는 수정부분
+
+        #############################################
         if predict_from_pixels:
             self.features = self.get_features(self.obs, reuse=False)
         else:
@@ -63,18 +67,37 @@ class Dynamics(object):
             n_out_features = self.out_features.get_shape()[-1].value
             x = tf.layers.dense(add_ac(x), n_out_features, activation=None)
             x = unflatten_first_dim(x, sh)
-        return tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1)
+            #####################################################
+            #ps = (tf.reduce_mean(tf.stop_gradient(self.out_features), -1))
+            ps = tf.reduce_mean(x,-1)
+            #####################################################
+            # tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1), buf_ac
+        return tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1), ps # 128 x 128 int x: state prediction - non update next obs RMS
 
     def calculate_loss(self, ob, last_ob, acs):
         n_chunks = 8
+        ans_buf = []
+        ans = []
+        ac_buf = []
+        ps_buf = []
         n = ob.shape[0]
         chunk_size = n // n_chunks
         assert n % n_chunks == 0
         sli = lambda i: slice(i * chunk_size, (i + 1) * chunk_size)
+        # important last_ob: pi(s_t+1) obs:pi(s_t) ac: (s0,a0)
+        for i in range(n_chunks):
+            (ans, ps) = getsess().run(self.loss,{self.obs: ob[sli(i)], self.last_ob: last_ob[sli(i)],
+                                              self.ac: acs[sli(i)]})
+            ans_buf.append(ans)
+            ps_buf.append(ps)
+            ac_buf.append(acs[sli(i)])
+        return np.concatenate(ans_buf,0), np.concatenate(ps_buf,0), np.concatenate(ac_buf,0)
+        
+        """
         return np.concatenate([getsess().run(self.loss,
                                              {self.obs: ob[sli(i)], self.last_ob: last_ob[sli(i)],
                                               self.ac: acs[sli(i)]}) for i in range(n_chunks)], 0)
-
+        """
 
 class UNet(Dynamics):
     def __init__(self, auxiliary_task, predict_from_pixels, feat_dim=None, scope='pixel_dynamics'):
@@ -94,7 +117,7 @@ class UNet(Dynamics):
         sh = tf.shape(ac)
         ac = flatten_two_dims(ac)
         ac_four_dim = tf.expand_dims(tf.expand_dims(ac, 1), 1)
-
+        print('b')
         def add_ac(x):
             if x.get_shape().ndims == 2:
                 return tf.concat([x, ac], axis=-1)
