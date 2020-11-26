@@ -89,18 +89,24 @@ class Dynamics(object):
         assert n % n_chunks == 0
         sli = lambda i: slice(i * chunk_size, (i + 1) * chunk_size)
         # important last_ob: pi(s_t+1) obs:pi(s_t) ac: (s0,a0)
-        print("self.features",self.features.shape)
-        print("acs",acs.shape)
         for i in range(n_chunks):
             if pat:
-                print("feat_input",feat_input.shape)
-                print("feat_input[sli(i)]",feat_input[sli(i)].shape)
-                print("ob",ob.shape)
-                print("ob[sli(i)]",ob[sli(i)].shape)
                 (ans, ps, feat) = getsess().run(self.loss,{self.obs: ob[sli(i)], self.last_ob: last_ob[sli(i)],
-                                              self.ac: acs[sli(i)], self.features: feat_input[sli(i)]})
+                                              self.ac: acs[sli(i)]})
+                ac = tf.one_hot(acs[sli(i)], 4, axis=2)
+                sh = tf.shape(ac)
+                ac = flatten_two_dims(ac)
+                print("ac.shape:",ac.shape)
+                print("feat.shape:",feat.shape)
+                print("result: ", tf.concat([[feat], [ac]], axis=-1).shape)
             else:
                 (ans, ps, feat) = getsess().run(self.loss,{self.obs: ob[sli(i)], self.last_ob: last_ob[sli(i)], self.ac: acs[sli(i)]})
+                ac = tf.one_hot(acs[sli(i)], 4, axis=2)
+                sh = tf.shape(ac)
+                ac = flatten_two_dims(ac)
+                print("ac.shape:",ac.shape)
+                print("feat.shape:",feat.shape)
+                print("result: ", tf.concat([[feat], [ac]], axis=-1).shape)
             ans_buf.append(ans)
             ps_buf.append(ps)
             ac_buf.append(acs[sli(i)])

@@ -10,10 +10,13 @@ class Patience(Model):
     def __init__(self):
         super(Patience, self).__init__()
     def call(self, s, ac):
+        def add_ac(x,ac):
+            return tf.concat([x, ac], axis=-1)
         def residual(x,ac):
-            res = tf.layers.dense(tf.concat([x, ac], axis=-1), 4, activation=tf.nn.leaky_relu)
-            res = tf.layers.dense(tf.concat([res, ac], axis=-1), 4, activation=None)
+            res = tf.layers.dense(add_ac(s,ac), 4, activation=tf.nn.leaky_relu)
+            res = tf.layers.dense(add_ac(s,ac), 4, activation=None)
             return x + res
+        #ac = np.expand_dims(ac,axis=(2,0))
         ac = tf.one_hot(ac, 4, axis=2)
         sh = tf.shape(ac)
         ac = flatten_two_dims(ac)

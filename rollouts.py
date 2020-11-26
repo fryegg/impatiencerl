@@ -7,7 +7,7 @@ tf.disable_v2_behavior()
 from recorder import Recorder
 import math
 from patience import Patience
-
+from utils import small_convnet, flatten_two_dims, unflatten_first_dim, getsess, unet
 @tf.function
 def train_step(model, s,ac, labels):
     train_loss = tf.keras.metrics.Mean(name='train_loss')
@@ -84,7 +84,7 @@ class Rollout(object):
         self.ac_buf = self.int_rew = np.zeros((nenvs,), np.float32)
         self.buf_acs_nold = np.empty((nenvs, self.nsteps, *self.ac_space.shape), self.ac_space.dtype)
         self.ac_buf_nold = np.empty((nenvs, self.nsteps, *self.ac_space.shape), self.ac_space.dtype)
-        self.nthe = 1
+        self.nthe = 3
         self.ac_list = []
         self.ps_list = []
         self.rew_list = []
@@ -114,6 +114,8 @@ class Rollout(object):
         self.rew_list.append(int_rew)
         self.obs_list.append(self.buf_obs)
         self.feat_list.append(feat)
+        #self.feat_list = tf.stack([self.feat_list, feat])
+        #print(self.feat_list[0])
         gpu_devices = tf.config.experimental.list_physical_devices('GPU')
         """
         for device in gpu_devices:
@@ -133,7 +135,7 @@ class Rollout(object):
             sess = tf.Session()
             
             coc = self.rew_list[0] - int_rew_now
-
+            print("coc",coc)
             norm_coc = (coc - self.mean)/math.sqrt(self.var)
             
             self.mean = 0.9 * self.mean + 0.1 * coc
@@ -142,7 +144,6 @@ class Rollout(object):
             node = tf.math.sigmoid(norm_coc)
             
             self.pat = sess.run(node)
-            print(self.pat.shape)
             #여기다가 sigmoid function넣어놔야 0하고 1사이에 잘 들어간다.
             #diff = sess.run(node)
             #MontezumaRevengeNoFrameskip-v4
@@ -152,6 +153,7 @@ class Rollout(object):
             # patience_pred 
             model = Patience()
             #self.patience_pred = Patience(state = self.obs_list[0],action = self.ac_list[0], labels = self.pat, ac_space = self.ac_space, auxiliary_task = self.dynamics.auxiliary_task).get_loss()
+            print("hi",self.feat_list[0].shape,self.ac_list[0].shape)
             self.patience_pred = model(self.feat_list[0],self.ac_list[0])
             train_step(model, self.feat_list[0],self.ac_list[0],self.pat)
             #########################
@@ -159,9 +161,6 @@ class Rollout(object):
             # elementwise multiply
             int_rew = np.multiply(int_rew, self.patience_pred)
             
-        print("step_count: ", int(self.step_count/self.nsteps))
-        print("reward shape: ", int_rew.shape)
-        print("patience: ", self.pat)
         ################################################################################
         self.buf_rews[:] = self.reward_fun(int_rew=int_rew, ext_rew=self.buf_ext_rews)
         
