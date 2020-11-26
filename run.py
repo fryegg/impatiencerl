@@ -71,7 +71,9 @@ class Trainer(object):
         self.dynamics = self.dynamics(auxiliary_task=self.feature_extractor,
                                       predict_from_pixels=hps['dyn_from_pixels'],
                                       feat_dim=512)
+        ################################################################
 
+        ################################################################
         self.agent = PpoOptimizer(
             scope='ppo',
             ob_space=self.ob_space,
@@ -91,12 +93,12 @@ class Trainer(object):
             normadv=hps['norm_adv'],
             ext_coeff=hps['ext_coeff'],
             int_coeff=hps['int_coeff'],
-            dynamics=self.dynamics
+            dynamics=self.dynamics,
         )
 
         self.agent.to_report['aux'] = tf.reduce_mean(self.feature_extractor.loss)
         self.agent.total_loss += self.agent.to_report['aux']
-        self.agent.to_report['dyn_loss'] = tf.reduce_mean(self.dynamics.loss)
+        self.agent.to_report['dyn_loss'] = tf.reduce_mean(self.dynamics.loss[0])
         self.agent.total_loss += self.agent.to_report['dyn_loss']
         self.agent.to_report['feat_var'] = tf.reduce_mean(tf.nn.moments(self.feature_extractor.features, [0, 1])[1])
 

@@ -5,7 +5,36 @@ from mpi4py import MPI
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 from recorder import Recorder
+import math
+from patience import Patience
 
+@tf.function
+def train_step(model, s,ac, labels):
+    train_loss = tf.keras.metrics.Mean(name='train_loss')
+    train_accuracy = tf.keras.metrics.MeanSquaredError(name="mean_squared_error", dtype=None)
+    
+    loss_object = tf.keras.losses.MSE()
+    optimizer = tf.keras.optimizers.Adam()
+    
+    with tf.GradientTape() as tape:
+        predictions = model(s,ac)
+        loss = loss_object(labels, predictions)
+    gradients = tape.gradient(loss, model.trainable_variables)
+    optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+    
+    train_loss(loss)
+    train_accuracy(labels, predictions)
+
+@tf.function
+def test_step(model, s,ac, labels):
+    loss_object = tf.keras.losses.MSE()
+    test_loss = tf.keras.metrics.Mean(name='test_loss')
+    test_accuracy = tf.keras.metrics.MeanSquaredError(name="mean_squared_error", dtype=None)
+    predictions = model(s,ac)
+    t_loss = loss_object(labels, predictions)
+
+    test_loss(t_loss)
+    test_accuracy(labels, predictions)
 
 class Rollout(object):
     def __init__(self, ob_space, ac_space, nenvs, nsteps_per_seg, nsegs_per_env, nlumps, envs, policy,
@@ -21,7 +50,6 @@ class Rollout(object):
         self.envs = envs
         self.policy = policy
         self.dynamics = dynamics
-
         self.reward_fun = lambda ext_rew, int_rew: ext_rew_coeff * np.clip(ext_rew, -1., 1.) + int_rew_coeff * int_rew
 
         self.buf_vpreds = np.empty((nenvs, self.nsteps), np.float32)
@@ -56,10 +84,16 @@ class Rollout(object):
         self.ac_buf = self.int_rew = np.zeros((nenvs,), np.float32)
         self.buf_acs_nold = np.empty((nenvs, self.nsteps, *self.ac_space.shape), self.ac_space.dtype)
         self.ac_buf_nold = np.empty((nenvs, self.nsteps, *self.ac_space.shape), self.ac_space.dtype)
-        self.nthe = 5
+        self.nthe = 1
         self.ac_list = []
         self.ps_list = []
-        self.patience = 0
+        self.rew_list = []
+        self.obs_list = []
+        self.feat_list = []
+        self.patience_pred = 0
+        self.pat = 0
+        self.mean = np.zeros((nenvs,), np.float32)
+        self.var = np.ones_like((nenvs,), np.float32)
         #########################################################
     def collect_rollout(self):
         self.ep_infos_new = []
@@ -71,39 +105,63 @@ class Rollout(object):
     def calculate_reward(self):
         #여기도 수정
         ##############################################################################
-        diff = 0
-        int_rew, ps, ac = self.dynamics.calculate_loss(ob=self.buf_obs,
+        int_rew, ps, ac, feat = self.dynamics.calculate_loss(ob=self.buf_obs,
                                                last_ob=self.buf_obs_last,
-                                               acs=self.buf_acs)
+                                               acs=self.buf_acs, feat_input = [],pat = 0)
+        print(int_rew.shape)
         self.ac_list.append(ac)
         self.ps_list.append(ps)
+        self.rew_list.append(int_rew)
+        self.obs_list.append(self.buf_obs)
+        self.feat_list.append(feat)
         gpu_devices = tf.config.experimental.list_physical_devices('GPU')
         """
         for device in gpu_devices:
             tf.config.experimental.set_memory_growth(device, True)
         """
+        
         if len(self.ac_list) > (self.nthe):
             self.ac_list = self.ac_list[1:]
             self.ps_list = self.ps_list[1:]
+            self.rew_list = self.rew_list[1:]
+            self.obs_list = self.obs_list[1:]
         
         if self.step_count/self.nsteps > self.nthe:
-            int_rew_now, ps_buf_now, ac_buf_now = self.dynamics.calculate_loss(ob=self.buf_obs,
+            int_rew_now, ps_now, ac_now, feat_now = self.dynamics.calculate_loss(ob=self.obs_list[0],
                                                 last_ob=self.buf_obs_last,
-                                                acs=self.ac_list[0])              #ps_buf_nold S_1**
-            #diff = tf.nn.sparse_softmax_cross_entropy_with_logits(labels = self.ps_list[0],logits = ps_buf_now) # Diff Function
+                                                acs=self.ac_list[0],feat_input = self.feat_list[0], pat = 1)              #ps_buf_nold S_1**
             sess = tf.Session()
-            # node =tf.compat.v1.losses.mean_squared_error(self.ps_list[0], ps_buf_now)
-            cce = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-            node = tf.math.sigmoid(cce(ps_buf_now,self.ps_list[0]))
-            diff = sess.run(node)
+            
+            coc = self.rew_list[0] - int_rew_now
+
+            norm_coc = (coc - self.mean)/math.sqrt(self.var)
+            
+            self.mean = 0.9 * self.mean + 0.1 * coc
+            self.var = 0.9 * self.var + 0.1 * coc**2
+            
+            node = tf.math.sigmoid(norm_coc)
+            
+            self.pat = sess.run(node)
+            print(self.pat.shape)
             #여기다가 sigmoid function넣어놔야 0하고 1사이에 잘 들어간다.
             #diff = sess.run(node)
             #MontezumaRevengeNoFrameskip-v4
-            self.patience = 0.9 * self.patience + 0.1 * diff
-            int_rew = int_rew * self.patience
+            #self.patience = 0.9 * self.patience + 0.1 * diff
+            #########################
+            #self.patience.train_step()
+            # patience_pred 
+            model = Patience()
+            #self.patience_pred = Patience(state = self.obs_list[0],action = self.ac_list[0], labels = self.pat, ac_space = self.ac_space, auxiliary_task = self.dynamics.auxiliary_task).get_loss()
+            self.patience_pred = model(self.feat_list[0],self.ac_list[0])
+            train_step(model, self.feat_list[0],self.ac_list[0],self.pat)
+            #########################
+            #int_rew = int_rew * self.patience_pred
+            # elementwise multiply
+            int_rew = np.multiply(int_rew, self.patience_pred)
+            
         print("step_count: ", int(self.step_count/self.nsteps))
         print("reward shape: ", int_rew.shape)
-        print("patience: ", self.patience)
+        print("patience: ", self.pat)
         ################################################################################
         self.buf_rews[:] = self.reward_fun(int_rew=int_rew, ext_rew=self.buf_ext_rews)
         

@@ -23,11 +23,11 @@ class Dynamics(object):
 
         #############################################
         if predict_from_pixels:
-            self.features = self.get_features(self.obs, reuse=False) #s_t
+            self.features = self.get_features(self.obs, reuse=False)
         else:
-            self.features = tf.stop_gradient(self.auxiliary_task.features) #s_t
+            self.features = tf.stop_gradient(self.auxiliary_task.features)
 
-        self.out_features = self.auxiliary_task.next_features # find s_t+1
+        self.out_features = self.auxiliary_task.next_features
 
         with tf.variable_scope(self.scope + "_loss"):
             self.loss = self.get_loss()
@@ -49,13 +49,12 @@ class Dynamics(object):
         ac = tf.one_hot(self.ac, self.ac_space.n, axis=2)
         sh = tf.shape(ac)
         ac = flatten_two_dims(ac)
-        
+
         def add_ac(x):
             return tf.concat([x, ac], axis=-1)
 
         with tf.variable_scope(self.scope):
             x = flatten_two_dims(self.features)
-            x = tf.reshape(x,(-1,512))
             x = tf.layers.dense(add_ac(x), self.hidsize, activation=tf.nn.leaky_relu)
 
             def residual(x):
@@ -71,42 +70,35 @@ class Dynamics(object):
             #####################################################
             #ps = (tf.reduce_mean(tf.stop_gradient(self.out_features), -1))
             ps = tf.reduce_mean(x,-1)
-            #print("reward: ", tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1).shape)
             #####################################################
             # tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1), buf_ac
-        return tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1), ps, self.features # 84 x 84 x 128 x128 int x: state prediction - non update next obs RMS -> reward : 128(pararellel thread) x 128(rollouts length)
-        # return tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1), ps, self.features
+        return tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1), ps # 128 x 128 int x: state prediction - non update next obs RMS
 
-    def calculate_loss(self, ob, last_ob, acs, feat_input, pat):
+    def calculate_loss(self, ob, last_ob, acs):
         n_chunks = 8
         ans_buf = []
         ans = []
         ac_buf = []
         ps_buf = []
-        feat_buf = []
         n = ob.shape[0]
         chunk_size = n // n_chunks
         assert n % n_chunks == 0
         sli = lambda i: slice(i * chunk_size, (i + 1) * chunk_size)
         # important last_ob: pi(s_t+1) obs:pi(s_t) ac: (s0,a0)
-        print("self.features",self.features.shape)
-        print("acs",acs.shape)
         for i in range(n_chunks):
-            if pat:
-                print("feat_input",feat_input.shape)
-                print("feat_input[sli(i)]",feat_input[sli(i)].shape)
-                print("ob",ob.shape)
-                print("ob[sli(i)]",ob[sli(i)].shape)
-                (ans, ps, feat) = getsess().run(self.loss,{self.obs: ob[sli(i)], self.last_ob: last_ob[sli(i)],
-                                              self.ac: acs[sli(i)], self.features: feat_input[sli(i)]})
-            else:
-                (ans, ps, feat) = getsess().run(self.loss,{self.obs: ob[sli(i)], self.last_ob: last_ob[sli(i)], self.ac: acs[sli(i)]})
+            (ans, ps) = getsess().run(self.loss,{self.obs: ob[sli(i)], self.last_ob: last_ob[sli(i)],
+                                              self.ac: acs[sli(i)]})
             ans_buf.append(ans)
             ps_buf.append(ps)
             ac_buf.append(acs[sli(i)])
-            feat_buf.append(feat)
-        return np.concatenate(ans_buf,0), np.concatenate(ps_buf,0), np.concatenate(ac_buf,0), np.concatenate(feat_buf,0)
+        return np.concatenate(ans_buf,0), np.concatenate(ps_buf,0), np.concatenate(ac_buf,0)
         
+        """
+        return np.concatenate([getsess().run(self.loss,
+                                             {self.obs: ob[sli(i)], self.last_ob: last_ob[sli(i)],
+                                              self.ac: acs[sli(i)]}) for i in range(n_chunks)], 0)
+        """
+
 class UNet(Dynamics):
     def __init__(self, auxiliary_task, predict_from_pixels, feat_dim=None, scope='pixel_dynamics'):
         assert isinstance(auxiliary_task, JustPixels)
@@ -125,6 +117,7 @@ class UNet(Dynamics):
         sh = tf.shape(ac)
         ac = flatten_two_dims(ac)
         ac_four_dim = tf.expand_dims(tf.expand_dims(ac, 1), 1)
+        print('b')
         def add_ac(x):
             if x.get_shape().ndims == 2:
                 return tf.concat([x, ac], axis=-1)
