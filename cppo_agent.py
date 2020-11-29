@@ -23,8 +23,9 @@ class PpoOptimizer(object):
                  ent_coef, gamma, lam, nepochs, lr, cliprange,
                  nminibatches,
                  normrew, normadv, use_news, ext_coeff, int_coeff,
-                 nsteps_per_seg, nsegs_per_env, dynamics):
+                 nsteps_per_seg, nsegs_per_env, dynamics, patience):
         self.dynamics = dynamics
+        self.patience = patience
         with tf.variable_scope(scope):
             self.use_recorder = True
             self.n_updates = 0
@@ -71,7 +72,7 @@ class PpoOptimizer(object):
             self.to_report = {'tot': self.total_loss, 'pg': pg_loss, 'vf': vf_loss, 'ent': entropy,
                               'approxkl': approxkl, 'clipfrac': clipfrac}
 
-    def start_interaction(self, env_fns, dynamics, nlump=2):
+    def start_interaction(self, env_fns, dynamics, patience, nlump=2):
         self.loss_names, self._losses = zip(*list(self.to_report.items()))
 
         params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
@@ -103,7 +104,8 @@ class PpoOptimizer(object):
                                int_rew_coeff=self.int_coeff,
                                ext_rew_coeff=self.ext_coeff,
                                record_rollouts=self.use_recorder,
-                               dynamics=dynamics)
+                               dynamics=dynamics,
+                               patience = patience)
 
         self.buf_advs = np.zeros((nenvs, self.rollout.nsteps), np.float32)
         self.buf_rets = np.zeros((nenvs, self.rollout.nsteps), np.float32)

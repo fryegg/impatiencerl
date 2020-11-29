@@ -55,7 +55,6 @@ class Dynamics(object):
 
         with tf.variable_scope(self.scope):
             x = flatten_two_dims(self.features)
-            x = tf.reshape(x,(-1,512))
             x = tf.layers.dense(add_ac(x), self.hidsize, activation=tf.nn.leaky_relu)
 
             def residual(x):
@@ -70,7 +69,7 @@ class Dynamics(object):
             x = unflatten_first_dim(x, sh)
             #####################################################
             #ps = (tf.reduce_mean(tf.stop_gradient(self.out_features), -1))
-            ps = tf.reduce_mean(x,-1)
+            ps = x
             #print("reward: ", tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1).shape)
             #####################################################
             # tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1), buf_ac
@@ -91,8 +90,11 @@ class Dynamics(object):
         # important last_ob: pi(s_t+1) obs:pi(s_t) ac: (s0,a0)
         for i in range(n_chunks):
             if pat:
+                print("feat_input",feat_input.shape)
                 (ans, ps, feat) = getsess().run(self.loss,{self.obs: ob[sli(i)], self.last_ob: last_ob[sli(i)],
                                               self.ac: acs[sli(i)], self.features:feat_input[sli(i)]})
+                print("acs[sli(i)]: ",acs[sli(i)].shape)
+                print("feat_input[sli(i)]: ",feat_input[sli(i)].shape)
                 ac = tf.one_hot(acs[sli(i)], 4, axis=2)
                 sh = tf.shape(ac)
                 ac = flatten_two_dims(ac)

@@ -19,6 +19,7 @@ from auxiliary_tasks import FeatureExtractor, InverseDynamics, VAE, JustPixels
 from cnn_policy import CnnPolicy
 from cppo_agent import PpoOptimizer
 from dynamics import Dynamics, UNet
+from patience import Patience, UNet
 from utils import random_agent_ob_mean_std
 from wrappers import MontezumaInfoWrapper, make_mario_env, make_robo_pong, make_robo_hockey, \
     make_multi_pong, AddRandomStateToInfo, MaxAndSkipEnv, ProcessFrame84, ExtraTimeLimit
@@ -71,6 +72,10 @@ class Trainer(object):
         self.dynamics = self.dynamics(auxiliary_task=self.feature_extractor,
                                       predict_from_pixels=hps['dyn_from_pixels'],
                                       feat_dim=512)
+        self.patience = Patience if hps['feat_learning'] != 'pix2pix' else UNet
+        self.patience = self.patience(auxiliary_task=self.feature_extractor,
+                                      predict_from_pixels=hps['dyn_from_pixels'],
+                                      feat_dim=512)
         ################################################################
 
         ################################################################
@@ -94,12 +99,15 @@ class Trainer(object):
             ext_coeff=hps['ext_coeff'],
             int_coeff=hps['int_coeff'],
             dynamics=self.dynamics,
+            patience = self.patience,
         )
 
         self.agent.to_report['aux'] = tf.reduce_mean(self.feature_extractor.loss)
         self.agent.total_loss += self.agent.to_report['aux']
         self.agent.to_report['dyn_loss'] = tf.reduce_mean(self.dynamics.loss[0])
+        self.agent.to_report['pat_loss'] = tf.reduce_mean(self.patience.loss[0])
         self.agent.total_loss += self.agent.to_report['dyn_loss']
+        self.agent.total_loss += self.agent.to_report['pat_loss']
         self.agent.to_report['feat_var'] = tf.reduce_mean(tf.nn.moments(self.feature_extractor.features, [0, 1])[1])
 
     def _set_env_vars(self):
@@ -110,7 +118,7 @@ class Trainer(object):
         self.envs = [functools.partial(self.make_env, i) for i in range(self.envs_per_process)]
 
     def train(self):
-        self.agent.start_interaction(self.envs, nlump=self.hps['nlumps'], dynamics=self.dynamics)
+        self.agent.start_interaction(self.envs, nlump=self.hps['nlumps'], dynamics=self.dynamics, patience = self.patience)
         while True:
             # self.make_env.render()
             info = self.agent.step()
@@ -200,11 +208,12 @@ if __name__ == '__main__':
     for device in gpu_devices:
         tf.config.experimental.set_memory_growth(device, True)
     """
+    #tf.enable_eager_execution()
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     add_environments_params(parser)
     add_optimization_params(parser)
     add_rollout_params(parser)
-
+    
     parser.add_argument('--exp_name', type=str, default='')
     parser.add_argument('--seed', help='RNG seed', type=int, default=0)
     parser.add_argument('--dyn_from_pixels', type=int, default=0)

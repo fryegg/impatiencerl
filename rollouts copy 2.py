@@ -8,30 +8,24 @@ from recorder import Recorder
 import math
 from patience import Patience
 from utils import small_convnet, flatten_two_dims, unflatten_first_dim, getsess, unet
-
-def train_step(inputs,pred, labels):
+@tf.function
+def train_step(model, s,ac, labels):
     train_loss = tf.keras.metrics.Mean(name='train_loss')
     train_accuracy = tf.keras.metrics.MeanSquaredError(name="mean_squared_error", dtype=None)
-    loss_object = tf.keras.losses.MSE
+    
+    loss_object = tf.keras.losses.MSE()
     optimizer = tf.keras.optimizers.Adam()
-    params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
-    getsess = tf.get_default_session
-    print(params)
-    """
+    
     with tf.GradientTape() as tape:
-        loss = loss_object(labels,pred)
-    """
-    loss = loss_object(labels,pred)
-    trainer = tf.train.AdamOptimizer()
-    gekko = trainer.compute_gradients(loss, params)
-    gradients = getsess().run(gekko)
-    #gradients = tape.gradient(loss, params)
-    #optimizer.apply_gradients(zip(gradients, params))
-    #gekko = tf.convert_to_tensor(gekko)
-    train_gekko = getsess().run(trainer.apply_gradients(gradients))
+        predictions = model(s,ac)
+        loss = loss_object(labels, predictions)
+    gradients = tape.gradient(loss, model.trainable_variables)
+    optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+    
     train_loss(loss)
-    train_accuracy(labels, pred)
+    train_accuracy(labels, predictions)
 
+@tf.function
 def test_step(model, s,ac, labels):
     loss_object = tf.keras.losses.MSE()
     test_loss = tf.keras.metrics.Mean(name='test_loss')
@@ -44,7 +38,7 @@ def test_step(model, s,ac, labels):
 
 class Rollout(object):
     def __init__(self, ob_space, ac_space, nenvs, nsteps_per_seg, nsegs_per_env, nlumps, envs, policy,
-                 int_rew_coeff, ext_rew_coeff, record_rollouts, dynamics,patience): 
+                 int_rew_coeff, ext_rew_coeff, record_rollouts, dynamics,patience):
         self.nenvs = nenvs
         self.nsteps_per_seg = nsteps_per_seg
         self.nsegs_per_env = nsegs_per_env
@@ -147,16 +141,17 @@ class Rollout(object):
             sess = tf.Session()
             
             coc = self.rew_list[0] - int_rew_now
-            print("coc",coc.shape)
+            print("coc",coc)
             norm_coc = np.multiply((coc - self.mean),np.reciprocal(np.sqrt(self.var)))
             
             self.mean = 0.9 * self.mean + 0.1 * coc
             self.var = 0.9 * self.var + 0.1 * coc**2
-            print("norm_coc",norm_coc.shape)
+            
             node = tf.math.sigmoid(norm_coc)
             
-            pat = sess.run(node)
-            
+            self.pat = sess.run(node)
+            print("int_rew_now",int_rew_now.shape)
+            print("patshape",self.pat.shape)
             #여기다가 sigmoid function넣어놔야 0하고 1사이에 잘 들어간다.
             #diff = sess.run(node)
             #MontezumaRevengeNoFrameskip-v4
@@ -171,15 +166,15 @@ class Rollout(object):
             pat_pred = self.patience.calculate_loss(ob=self.obs_list[0],
                                                 last_ob=self.buf_obs_last,
                                                 acs=self.ac_list[0],feat_input = self.feat_list[0], pat = 1)
-            train_step(self.feat_list[0],pat_pred, pat)
+            
             # model.calculate_loss(ob=self.obs_list[0],
             #                                    last_ob=self.buf_obs_last,
             #                                    acs=self.ac_list[0], feat_input = self.feat_list[0])
             #train_step(model, self.feat_list[0],self.ac_list[0],self.pat)
             #########################
-            #int_rew = int_rew * pat_pred
+            #int_rew = int_rew * self.patience_pred
             # elementwise multiply
-            int_rew = np.multiply(int_rew, pat_pred)
+            #int_rew = np.multiply(int_rew, self.patience_pred)
             
         ################################################################################
         self.buf_rews[:] = self.reward_fun(int_rew=int_rew, ext_rew=self.buf_ext_rews)
