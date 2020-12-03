@@ -19,7 +19,7 @@ from auxiliary_tasks import FeatureExtractor, InverseDynamics, VAE, JustPixels
 from cnn_policy import CnnPolicy
 from cppo_agent import PpoOptimizer
 from dynamics import Dynamics, UNet
-from patience import Patience, UNet
+#from patience import Patience, UNet
 from utils import random_agent_ob_mean_std
 from wrappers import MontezumaInfoWrapper, make_mario_env, make_robo_pong, make_robo_hockey, \
     make_multi_pong, AddRandomStateToInfo, MaxAndSkipEnv, ProcessFrame84, ExtraTimeLimit
@@ -46,7 +46,7 @@ class Trainer(object):
         self.envs_per_process = envs_per_process
         self.num_timesteps = num_timesteps
         self._set_env_vars()
-
+        self.patience = 0
         self.policy = CnnPolicy(
             scope='pol',
             ob_space=self.ob_space,
@@ -72,10 +72,7 @@ class Trainer(object):
         self.dynamics = self.dynamics(auxiliary_task=self.feature_extractor,
                                       predict_from_pixels=hps['dyn_from_pixels'],
                                       feat_dim=512)
-        self.patience = Patience if hps['feat_learning'] != 'pix2pix' else UNet
-        self.patience = self.patience(auxiliary_task=self.feature_extractor,
-                                      predict_from_pixels=hps['dyn_from_pixels'],
-                                      feat_dim=512)
+  
         ################################################################
 
         ################################################################
@@ -105,9 +102,9 @@ class Trainer(object):
         self.agent.to_report['aux'] = tf.reduce_mean(self.feature_extractor.loss)
         self.agent.total_loss += self.agent.to_report['aux']
         self.agent.to_report['dyn_loss'] = tf.reduce_mean(self.dynamics.loss[0])
-        self.agent.to_report['pat_loss'] = tf.reduce_mean(self.patience.loss[0])
+        #self.agent.to_report['pat_loss'] = tf.reduce_mean(self.patience.loss[0])
         self.agent.total_loss += self.agent.to_report['dyn_loss']
-        self.agent.total_loss += self.agent.to_report['pat_loss']
+        #self.agent.total_loss += self.agent.to_report['pat_loss']
         self.agent.to_report['feat_var'] = tf.reduce_mean(tf.nn.moments(self.feature_extractor.features, [0, 1])[1])
 
     def _set_env_vars(self):

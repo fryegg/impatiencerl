@@ -67,7 +67,6 @@ class PpoOptimizer(object):
             ent_loss = (- ent_coef) * entropy
             approxkl = .5 * tf.reduce_mean(tf.square(neglogpac - self.ph_oldnlp))
             clipfrac = tf.reduce_mean(tf.to_float(tf.abs(pg_losses2 - pg_loss_surr) > 1e-6))
-
             self.total_loss = pg_loss + ent_loss + vf_loss
             self.to_report = {'tot': self.total_loss, 'pg': pg_loss, 'vf': vf_loss, 'ent': entropy,
                               'approxkl': approxkl, 'clipfrac': clipfrac}
@@ -143,6 +142,7 @@ class PpoOptimizer(object):
             rews = self.rollout.buf_rews / np.sqrt(self.rff_rms.var)
         else:
             rews = np.copy(self.rollout.buf_rews)
+        
         self.calculate_advantages(rews=rews, use_news=self.use_news, gamma=self.gamma, lam=self.lam)
 
         info = dict(
@@ -195,8 +195,26 @@ class PpoOptimizer(object):
                 mbenvinds = envinds[start:end]
                 fd = {ph: buf[mbenvinds] for (ph, buf) in ph_buf}
                 fd.update({self.ph_lr: self.lr, self.ph_cliprange: self.cliprange})
+                print("epoch: ", self.n_updates)
+                """
+                if self.n_updates > 2:
+                    params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
+                    getsess().run(tf.variables_initializer(params))
+                    print("pat: ", tf.convert_to_tensor(self.rollout.pat, dtype=tf.float32))
+                    print("pat_pred: ", self.rollout.pat_pred)
+                    self.pat_loss = tf.math.reduce_mean(tf.math.pow((tf.convert_to_tensor(self.rollout.pat, dtype=tf.float32) - self.rollout.pat_pred),2))
+                    #self.pat_loss = tf.keras.losses.MSE(tf.convert_to_tensor(self.rollout.pat, dtype=tf.float32),self.rollout.pat_pred)
+                    print("patience_loss: ", self.pat_loss.eval())
+                    print(self.pat_loss.shape)
+                    trainer = tf.train.AdamOptimizer(learning_rate=self.ph_lr)
+                    patty = trainer.compute_gradients(self.pat_loss, params)
+                    print(patty)
+                    self._train_pat = trainer.apply_gradients(patty)
+                    #getsess().run(self._train_pat)
+                    mblossvals.append(getsess().run(self._losses + (self._train,), fd)[:-1])
+                    print("helooooooooooooooooooooooooooooooooooooooooooooooooo")
+                """
                 mblossvals.append(getsess().run(self._losses + (self._train,), fd)[:-1])
-
         mblossvals = [mblossvals[0]]
         info.update(zip(['opt_' + ln for ln in self.loss_names], np.mean([mblossvals[0]], axis=0)))
         info["rank"] = MPI.COMM_WORLD.Get_rank()

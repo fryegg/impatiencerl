@@ -6,41 +6,8 @@ import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 from recorder import Recorder
 import math
-from patience import Patience
+#from patience import TwoLayerNet, train_step
 from utils import small_convnet, flatten_two_dims, unflatten_first_dim, getsess, unet
-
-def train_step(inputs,pred, labels):
-    train_loss = tf.keras.metrics.Mean(name='train_loss')
-    train_accuracy = tf.keras.metrics.MeanSquaredError(name="mean_squared_error", dtype=None)
-    loss_object = tf.keras.losses.MSE
-    optimizer = tf.keras.optimizers.Adam()
-    params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
-    getsess = tf.get_default_session
-    print(params)
-    """
-    with tf.GradientTape() as tape:
-        loss = loss_object(labels,pred)
-    """
-    loss = loss_object(labels,pred)
-    trainer = tf.train.AdamOptimizer()
-    gekko = trainer.compute_gradients(loss, params)
-    gradients = getsess().run(gekko)
-    #gradients = tape.gradient(loss, params)
-    #optimizer.apply_gradients(zip(gradients, params))
-    #gekko = tf.convert_to_tensor(gekko)
-    train_gekko = getsess().run(trainer.apply_gradients(gradients))
-    train_loss(loss)
-    train_accuracy(labels, pred)
-
-def test_step(model, s,ac, labels):
-    loss_object = tf.keras.losses.MSE()
-    test_loss = tf.keras.metrics.Mean(name='test_loss')
-    test_accuracy = tf.keras.metrics.MeanSquaredError(name="mean_squared_error", dtype=None)
-    predictions = model(s,ac)
-    t_loss = loss_object(labels, predictions)
-
-    test_loss(t_loss)
-    test_accuracy(labels, predictions)
 
 class Rollout(object):
     def __init__(self, ob_space, ac_space, nenvs, nsteps_per_seg, nsegs_per_env, nlumps, envs, policy,
@@ -86,14 +53,11 @@ class Rollout(object):
         self.step_count = 0
 
         #########################################################
-        self.ps_buf = self.int_rew = np.zeros((nenvs,), np.float32)
-        self.ps_buf_nold = self.int_rew = np.zeros((nenvs,), np.float32)
         self.ac_buf = self.int_rew = np.zeros((nenvs,), np.float32)
         self.buf_acs_nold = np.empty((nenvs, self.nsteps, *self.ac_space.shape), self.ac_space.dtype)
         self.ac_buf_nold = np.empty((nenvs, self.nsteps, *self.ac_space.shape), self.ac_space.dtype)
-        self.nthe = 2
+        self.nthe = 1
         self.ac_list = []
-        self.ps_list = []
         self.rew_list = []
         self.obs_list = []
         self.feat_list = []
@@ -101,6 +65,8 @@ class Rollout(object):
         self.pat = 0
         self.mean = np.zeros((nenvs,), np.float32)
         self.var = np.ones_like((nenvs,), np.float32)
+        self.model = 0
+        self.flag = 1
         #########################################################
     def collect_rollout(self):
         self.ep_infos_new = []
@@ -112,12 +78,12 @@ class Rollout(object):
     def calculate_reward(self):
         #여기도 수정
         ##############################################################################
-        int_rew, ps, ac, feat = self.dynamics.calculate_loss(ob=self.buf_obs,
+        int_rew, ac, feat = self.dynamics.calculate_loss(ob=self.buf_obs,
                                                last_ob=self.buf_obs_last,
                                                acs=self.buf_acs, feat_input = [],pat = 0)
-        print(int_rew.shape)
+        
+        print("int_rew: sssssssssssssssssssssssssssssssssssssssssssssssss",int_rew.shape)
         self.ac_list.append(ac)
-        self.ps_list.append(ps)
         self.rew_list.append(int_rew)
         self.obs_list.append(self.buf_obs)
         self.feat_list.append(feat)
@@ -131,21 +97,16 @@ class Rollout(object):
         
         if len(self.ac_list) > (self.nthe):
             self.ac_list = self.ac_list[1:]
-            self.ps_list = self.ps_list[1:]
             self.rew_list = self.rew_list[1:]
             self.obs_list = self.obs_list[1:]
         
         if self.step_count/self.nsteps > self.nthe:
-            #ac_spec = tf.one_hot(self.ac_list[0], 4, axis=2)
-            #ac_spec = flatten_two_dims(ac_spec)
-            #print("ac_speccccccccccccccccccc:",ac_spec.shape)
-            int_rew_now, ps_now, ac_now, feat_now = self.dynamics.calculate_loss(ob=self.obs_list[0],
+            int_rew_now, ac_now, feat_now = self.dynamics.calculate_loss(ob=self.obs_list[0],
                                                 last_ob=self.buf_obs_last,
                                                 acs=self.ac_list[0],feat_input = self.feat_list[0], pat = 1)              #ps_buf_nold S_1**
             
             print("Sucess///////////////////////////////////////////////////////////////")
             sess = tf.Session()
-            
             coc = self.rew_list[0] - int_rew_now
             print("coc",coc.shape)
             norm_coc = np.multiply((coc - self.mean),np.reciprocal(np.sqrt(self.var)))
@@ -157,31 +118,52 @@ class Rollout(object):
             
             pat = sess.run(node)
             
-            #여기다가 sigmoid function넣어놔야 0하고 1사이에 잘 들어간다.
-            #diff = sess.run(node)
             #MontezumaRevengeNoFrameskip-v4
-            #self.patience = 0.9 * self.patience + 0.1 * diff
-            #########################
-            #self.patience.train_step()
-            # patience_pred 
-            #model = Patience(self.obs_list[0],self.buf_obs_last,self.ac_list[0],self.feat_list[0])
-            #self.patience_pred = Patience(state = self.obs_list[0],action = self.ac_list[0], labels = self.pat, ac_space = self.ac_space, auxiliary_task = self.dynamics.auxiliary_task).get_loss()
-            #print("hi",self.feat_list[0].shape,self.ac_list[0].shape)
-            #self.patience_pred = model(self.feat_list[0],self.ac_list[0])
-            pat_pred = self.patience.calculate_loss(ob=self.obs_list[0],
-                                                last_ob=self.buf_obs_last,
-                                                acs=self.ac_list[0],feat_input = self.feat_list[0], pat = 1)
-            train_step(self.feat_list[0],pat_pred, pat)
-            # model.calculate_loss(ob=self.obs_list[0],
-            #                                    last_ob=self.buf_obs_last,
-            #                                    acs=self.ac_list[0], feat_input = self.feat_list[0])
-            #train_step(model, self.feat_list[0],self.ac_list[0],self.pat)
-            #########################
-            #int_rew = int_rew * pat_pred
+
+            ##############################################################################
+            # This is the training code
+            if self.flag:
+                self.model = tf.keras.models.Sequential([
+                #tf.keras.layers.Flatten(input_shape=(84, 84,4)),
+                tf.keras.layers.Dense(128, activation='relu'),
+                tf.keras.layers.Dropout(0.2),
+                tf.keras.layers.Dense(1),
+                #tf.keras.layers.Reshape(target_shape = (128,128,-1))
+                ])
+                self.flag = 0
+            x = flatten_two_dims(tf.convert_to_tensor(self.feat_list[0]))
+            print(x.shape)
+            ac = tf.one_hot(self.ac_list[0], self.ac_space.n, axis=2)
+            sh = tf.shape(ac)
+            ac = flatten_two_dims(ac)
+            x_new = tf.concat([x, ac], axis=-1)
+            # xnew 16384, 16384, 512+4
+            self.model.compile(optimizer='adam',
+              loss='mse',
+              metrics=['accuracy'])
+            # feat_list 128 x 128 x 512 action 128 x 128 x 4 hidsize 512
+            pred = self.model.predict(x_new, steps = 1)
+            print(pred)
+            pat = pat.reshape((16384,1))
+            print("pred",pred.shape)
+            self.model.fit(x_new, pat, epochs=5, steps_per_epoch = 1)
+            """
+            for i in range(128):
+                pred = model.predict(x[i], steps = 1)
+                print("pred:",pred.shape)
+                model.fit(x[i], pat[i], epochs=1, steps_per_epoch = 128)
+                pat_pred[i] = pred
+                print(pred)
+            """
             # elementwise multiply
-            int_rew = np.multiply(int_rew, pat_pred)
+            print("int_rew shape",int_rew.shape)
+            print("ext rew bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", self.buf_ext_rews.shape)
             
+            #int_rew = np.array(int_rew) * np.reshape(np.array(pred),(128,128))
+            #int_rew = np.multiply(int_rew,pat_pred)
+            print(int_rew.shape)
         ################################################################################
+        
         self.buf_rews[:] = self.reward_fun(int_rew=int_rew, ext_rew=self.buf_ext_rews)
         
 
