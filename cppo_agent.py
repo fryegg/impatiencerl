@@ -23,10 +23,11 @@ class PpoOptimizer(object):
                  ent_coef, gamma, lam, nepochs, lr, cliprange,
                  nminibatches,
                  normrew, normadv, use_news, ext_coeff, int_coeff,
-                 nsteps_per_seg, nsegs_per_env, dynamics, patience):
+                 nsteps_per_seg, nsegs_per_env, dynamics, patience, nthe):
         self.dynamics = dynamics
         self.patience = patience
         with tf.variable_scope(scope):
+            self.nthe = nthe
             self.use_recorder = True
             self.n_updates = 0
             self.scope = scope
@@ -79,6 +80,7 @@ class PpoOptimizer(object):
             trainer = MpiAdamOptimizer(learning_rate=self.ph_lr, comm=MPI.COMM_WORLD)
         else:
             trainer = tf.train.AdamOptimizer(learning_rate=self.ph_lr)
+        
         gradsandvars = trainer.compute_gradients(self.total_loss, params)
         self._train = trainer.apply_gradients(gradsandvars)
 
@@ -104,7 +106,9 @@ class PpoOptimizer(object):
                                ext_rew_coeff=self.ext_coeff,
                                record_rollouts=self.use_recorder,
                                dynamics=dynamics,
-                               patience = patience)
+                               patience = patience,
+                               nthe = self.nthe
+                               )
 
         self.buf_advs = np.zeros((nenvs, self.rollout.nsteps), np.float32)
         self.buf_rets = np.zeros((nenvs, self.rollout.nsteps), np.float32)
@@ -187,7 +191,9 @@ class PpoOptimizer(object):
              self.rollout.buf_obs_last.reshape([self.nenvs * self.nsegs_per_env, 1, *self.ob_space.shape]))
         ])
         mblossvals = []
-
+        print("nenvs",self.nenvs)
+        print("nsegs_per_Env",self.nsegs_per_env)
+        print("envsperbatch",envsperbatch)
         for _ in range(self.nepochs):
             np.random.shuffle(envinds)
             for start in range(0, self.nenvs * self.nsegs_per_env, envsperbatch):
@@ -195,26 +201,9 @@ class PpoOptimizer(object):
                 mbenvinds = envinds[start:end]
                 fd = {ph: buf[mbenvinds] for (ph, buf) in ph_buf}
                 fd.update({self.ph_lr: self.lr, self.ph_cliprange: self.cliprange})
-                print("epoch: ", self.n_updates)
-                """
-                if self.n_updates > 2:
-                    params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
-                    getsess().run(tf.variables_initializer(params))
-                    print("pat: ", tf.convert_to_tensor(self.rollout.pat, dtype=tf.float32))
-                    print("pat_pred: ", self.rollout.pat_pred)
-                    self.pat_loss = tf.math.reduce_mean(tf.math.pow((tf.convert_to_tensor(self.rollout.pat, dtype=tf.float32) - self.rollout.pat_pred),2))
-                    #self.pat_loss = tf.keras.losses.MSE(tf.convert_to_tensor(self.rollout.pat, dtype=tf.float32),self.rollout.pat_pred)
-                    print("patience_loss: ", self.pat_loss.eval())
-                    print(self.pat_loss.shape)
-                    trainer = tf.train.AdamOptimizer(learning_rate=self.ph_lr)
-                    patty = trainer.compute_gradients(self.pat_loss, params)
-                    print(patty)
-                    self._train_pat = trainer.apply_gradients(patty)
-                    #getsess().run(self._train_pat)
+                print("ddddddddddddddddddddddddd",self.rollout.flag2)
+                if self.rollout.flag2:
                     mblossvals.append(getsess().run(self._losses + (self._train,), fd)[:-1])
-                    print("helooooooooooooooooooooooooooooooooooooooooooooooooo")
-                """
-                mblossvals.append(getsess().run(self._losses + (self._train,), fd)[:-1])
         mblossvals = [mblossvals[0]]
         info.update(zip(['opt_' + ln for ln in self.loss_names], np.mean([mblossvals[0]], axis=0)))
         info["rank"] = MPI.COMM_WORLD.Get_rank()
@@ -255,3 +244,4 @@ class RewardForwardFilter(object):
         else:
             self.rewems = self.rewems * self.gamma + rews
         return self.rewems
+

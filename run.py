@@ -23,8 +23,9 @@ from dynamics import Dynamics, UNet
 from utils import random_agent_ob_mean_std
 from wrappers import MontezumaInfoWrapper, make_mario_env, make_robo_pong, make_robo_hockey, \
     make_multi_pong, AddRandomStateToInfo, MaxAndSkipEnv, ProcessFrame84, ExtraTimeLimit
-
-
+from baselines.common.vec_env.vec_video_recorder import VecVideoRecorder
+from baselines.common.vec_env.dummy_vec_env import DummyVecEnv
+import json
 def start_experiment(**args):
     make_env = partial(make_env_all_params, add_monitor=True, args=args)
 
@@ -36,6 +37,8 @@ def start_experiment(**args):
         logdir = logger.get_dir()
         print("results will be saved to ", logdir)
         print('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+        with open(logdir + '/commandline_args.txt', 'w') as f:
+            json.dump(args, f, indent=2)
         trainer.train()
 
 
@@ -47,6 +50,7 @@ class Trainer(object):
         self.num_timesteps = num_timesteps
         self._set_env_vars()
         self.patience = 0
+        self.nthe = hps['nthe']
         self.policy = CnnPolicy(
             scope='pol',
             ob_space=self.ob_space,
@@ -97,18 +101,17 @@ class Trainer(object):
             int_coeff=hps['int_coeff'],
             dynamics=self.dynamics,
             patience = self.patience,
+            nthe = self.nthe
         )
 
         self.agent.to_report['aux'] = tf.reduce_mean(self.feature_extractor.loss)
         self.agent.total_loss += self.agent.to_report['aux']
         self.agent.to_report['dyn_loss'] = tf.reduce_mean(self.dynamics.loss[0])
-        #self.agent.to_report['pat_loss'] = tf.reduce_mean(self.patience.loss[0])
         self.agent.total_loss += self.agent.to_report['dyn_loss']
-        #self.agent.total_loss += self.agent.to_report['pat_loss']
         self.agent.to_report['feat_var'] = tf.reduce_mean(tf.nn.moments(self.feature_extractor.features, [0, 1])[1])
 
     def _set_env_vars(self):
-        env = self.make_env(0, add_monitor=False)
+        env = self.make_env(0, add_monitor=False) #False
         self.ob_space, self.ac_space = env.observation_space, env.action_space
         self.ob_mean, self.ob_std = random_agent_ob_mean_std(env)
         del env
@@ -117,7 +120,6 @@ class Trainer(object):
     def train(self):
         self.agent.start_interaction(self.envs, nlump=self.hps['nlumps'], dynamics=self.dynamics, patience = self.patience)
         while True:
-            # self.make_env.render()
             info = self.agent.step()
             if info['update']:
                 logger.logkvs(info['update'])
@@ -151,7 +153,22 @@ def make_env_all_params(rank, add_monitor, args):
             env = make_robo_hockey()
 
     if add_monitor:
+        #print(osp.join(logger.get_dir(), '%.2i' % rank + '.monitor.csv'))
+        
         env = Monitor(env, osp.join(logger.get_dir(), '%.2i' % rank))
+        """
+        env = DummyVecEnv([lambda: env])
+        
+        env = VecVideoRecorder(env, directory = './vid',
+                       record_video_trigger=lambda step: step == 0,
+                       video_length= 100,)
+        
+        env.reset()
+        """
+        #env = wrappers.Monitor(env,'./vid/',force = True,write_upon_reset = True, video_callable=lambda episode: True)
+        #print(osp.join(logger.get_dir()))
+        #env = Monitor(env, osp.join(logger.get_dir()))
+        #env = Monitor(env,  "./vid", video_callable=lambda episode_id: True,force=True)
     return env
 
 
@@ -188,7 +205,7 @@ def add_optimization_params(parser):
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--ent_coeff', type=float, default=0.001)
     parser.add_argument('--nepochs', type=int, default=3)
-    parser.add_argument('--num_timesteps', type=int, default=int(1e8))
+    parser.add_argument('--num_timesteps', type=int, default=int(1e6))
 
 
 def add_rollout_params(parser):
@@ -196,16 +213,13 @@ def add_rollout_params(parser):
     parser.add_argument('--nsegs_per_env', type=int, default=1)
     parser.add_argument('--envs_per_process', type=int, default=128)
     parser.add_argument('--nlumps', type=int, default=1)
+    parser.add_argument('--nthe', type=int, default=0)
 
 
 if __name__ == '__main__':
     import argparse
-    """
-    gpu_devices = tf.config.experimental.list_physical_devices('GPU')
-    for device in gpu_devices:
-        tf.config.experimental.set_memory_growth(device, True)
-    """
-    #tf.enable_eager_execution()
+    import os
+    
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     add_environments_params(parser)
     add_optimization_params(parser)
@@ -218,9 +232,17 @@ if __name__ == '__main__':
     parser.add_argument('--ext_coeff', type=float, default=0.)
     parser.add_argument('--int_coeff', type=float, default=1.)
     parser.add_argument('--layernorm', type=int, default=0)
-    parser.add_argument('--feat_learning', type=str, default="none",
+    parser.add_argument('--feat_learning', type=str, default="idf",
                         choices=["none", "idf", "vaesph", "vaenonsph", "pix2pix"])
 
+    parser.add_argument('--gpu', type=int,default = 2)
     args = parser.parse_args()
-
+    os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"]= str(args.gpu)
+    #os.environ["CUDA_VISIBLE_DEVICES"]="0"
+    print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
+    tf.debugging.set_log_device_placement(True)
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    print("gpus: ",gpus) 
     start_experiment(**args.__dict__)
+

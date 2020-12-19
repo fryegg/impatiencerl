@@ -1,17 +1,17 @@
-from collections import deque, defaultdict
 
+from collections import deque, defaultdict
 import numpy as np
 from mpi4py import MPI
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 from recorder import Recorder
 import math
-#from patience import TwoLayerNet, train_step
 from utils import small_convnet, flatten_two_dims, unflatten_first_dim, getsess, unet
+from tensorflow import keras
 
 class Rollout(object):
     def __init__(self, ob_space, ac_space, nenvs, nsteps_per_seg, nsegs_per_env, nlumps, envs, policy,
-                 int_rew_coeff, ext_rew_coeff, record_rollouts, dynamics,patience): 
+                 int_rew_coeff, ext_rew_coeff, record_rollouts, dynamics,patience, nthe):
         self.nenvs = nenvs
         self.nsteps_per_seg = nsteps_per_seg
         self.nsegs_per_env = nsegs_per_env
@@ -56,17 +56,18 @@ class Rollout(object):
         self.ac_buf = self.int_rew = np.zeros((nenvs,), np.float32)
         self.buf_acs_nold = np.empty((nenvs, self.nsteps, *self.ac_space.shape), self.ac_space.dtype)
         self.ac_buf_nold = np.empty((nenvs, self.nsteps, *self.ac_space.shape), self.ac_space.dtype)
-        self.nthe = 1
+        self.nthe = nthe
         self.ac_list = []
         self.rew_list = []
         self.obs_list = []
         self.feat_list = []
         self.patience_pred = 0
         self.pat = 0
-        self.mean = np.zeros((nenvs,), np.float32)
-        self.var = np.ones_like((nenvs,), np.float32)
+        self.mean = np.zeros((128,128), np.float32)
+        self.var = np.ones((128,128), np.float32)
         self.model = 0
         self.flag = 1
+        self.flag2 = 1
         #########################################################
     def collect_rollout(self):
         self.ep_infos_new = []
@@ -78,94 +79,134 @@ class Rollout(object):
     def calculate_reward(self):
         #여기도 수정
         ##############################################################################
+        print("fffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
         int_rew, ac, feat = self.dynamics.calculate_loss(ob=self.buf_obs,
                                                last_ob=self.buf_obs_last,
                                                acs=self.buf_acs, feat_input = [],pat = 0)
-        
-        print("int_rew: sssssssssssssssssssssssssssssssssssssssssssssssss",int_rew.shape)
+
         self.ac_list.append(ac)
         self.rew_list.append(int_rew)
         self.obs_list.append(self.buf_obs)
         self.feat_list.append(feat)
-        #self.feat_list = tf.stack([self.feat_list, feat])
-        #print(self.feat_list[0])
-        gpu_devices = tf.config.experimental.list_physical_devices('GPU')
-        """
-        for device in gpu_devices:
-            tf.config.experimental.set_memory_growth(device, True)
-        """
-        
+        print("ac_list", len(self.ac_list))
+        print("rew_list", len(self.rew_list))
+        print("obs_list", len(self.obs_list))
+        print("feat_list", len(self.feat_list))
+        #self.feat_list = tf.stack(self.feat_list, feat)
+        # if len(self.ac_list) > (self.nthe):
         if len(self.ac_list) > (self.nthe):
             self.ac_list = self.ac_list[1:]
             self.rew_list = self.rew_list[1:]
             self.obs_list = self.obs_list[1:]
-        
-        if self.step_count/self.nsteps > self.nthe:
+            self.feat_list = self.feat_list[1:]
+
+        if self.step_count/self.nsteps > self.nthe and self.nthe:
+            self.flag2 = 0
+            print("ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss")
             int_rew_now, ac_now, feat_now = self.dynamics.calculate_loss(ob=self.obs_list[0],
                                                 last_ob=self.buf_obs_last,
-                                                acs=self.ac_list[0],feat_input = self.feat_list[0], pat = 1)              #ps_buf_nold S_1**
-            
-            print("Sucess///////////////////////////////////////////////////////////////")
-            sess = tf.Session()
-            coc = self.rew_list[0] - int_rew_now
-            print("coc",coc.shape)
-            norm_coc = np.multiply((coc - self.mean),np.reciprocal(np.sqrt(self.var)))
-            
-            self.mean = 0.9 * self.mean + 0.1 * coc
-            self.var = 0.9 * self.var + 0.1 * coc**2
-            print("norm_coc",norm_coc.shape)
-            node = tf.math.sigmoid(norm_coc)
-            
-            pat = sess.run(node)
-            
+                                                acs=self.ac_list[0],feat_input = self.feat_list[0], pat = 1)               
+            coc = 10*abs(self.rew_list[0] - int_rew_now)
+            """
+            if self.flag:
+                self.mean = coc
+                print("var shape: ",self.var.shape)
+                norm_coc = np.multiply((coc - self.mean),np.reciprocal(np.sqrt(self.var)))
+            else:
+                norm_coc = np.multiply((coc - self.mean),np.reciprocal(np.sqrt(self.var)))
+            """
+            norm_coc = coc
+            #norm_coc = np.multiply((coc - self.mean),np.reciprocal(np.sqrt(self.var)))
+            #print("previous rew",self.rew_list[0])
+            #print("now rew",int_rew_now)
+            #self.mean = 0.8 * self.mean + 0.2 * coc
+            #self.var = 0.8 * self.var + 0.2 * (coc-self.mean)**2
+            #print("norm_coc",norm_coc)
+            pat = norm_coc
+            #pat = 1 / (1 + np.exp(-norm_coc))
             #MontezumaRevengeNoFrameskip-v4
 
             ##############################################################################
             # This is the training code
             if self.flag:
                 self.model = tf.keras.models.Sequential([
-                #tf.keras.layers.Flatten(input_shape=(84, 84,4)),
-                tf.keras.layers.Dense(128, activation='relu'),
+                
+                tf.keras.layers.Dense(256, activation="relu"),
+                tf.keras.layers.Dense(128, activation="relu"),
                 tf.keras.layers.Dropout(0.2),
+                tf.keras.layers.Dense(64, activation="relu"),
+                #tf.keras.layers.Dropout(0.3),
+                tf.keras.layers.Dense(32, activation="relu"),
                 tf.keras.layers.Dense(1),
+                #tf.keras.layers.Flatten(input_shape=(84, 84,4)),
+                #tf.keras.layers.Dense(128, activation='relu'),
+                #tf.keras.layers.Dropout(0.2),
+                #tf.keras.layers.Dense(1),
                 #tf.keras.layers.Reshape(target_shape = (128,128,-1))
                 ])
+
                 self.flag = 0
-            x = flatten_two_dims(tf.convert_to_tensor(self.feat_list[0]))
-            print(x.shape)
+            #x = flatten_two_dims(tf.convert_to_tensor(self.feat_list[0]))
+            x = tf.convert_to_tensor(self.feat_list[0])
+            x_test = tf.convert_to_tensor(self.feat_list[-1])
+
+            #print("Feature dim before converting into Tensor: ", self.feat_list[0].shape)
+            #print("Feature dim after converting into Tensor", tf.convert_to_tensor(self.feat_list[0].shape))
+            #print("Flatten Two Dim ..Feature Dim..:", x.shape)
             ac = tf.one_hot(self.ac_list[0], self.ac_space.n, axis=2)
+            ac_test = tf.one_hot(self.ac_list[-1], self.ac_space.n, axis=2)
+            #print("Action Dim ..before one hot..: ",self.ac_list[0].shape, self.ac_space.n)
+            #print("Action Dim ..After one hot: ", ac.shape) 
             sh = tf.shape(ac)
-            ac = flatten_two_dims(ac)
+            #ac = flatten_two_dims(ac)
+            #print("Action Dim after flatten", ac.shape)
             x_new = tf.concat([x, ac], axis=-1)
-            # xnew 16384, 16384, 512+4
-            self.model.compile(optimizer='adam',
-              loss='mse',
-              metrics=['accuracy'])
-            # feat_list 128 x 128 x 512 action 128 x 128 x 4 hidsize 512
-            pred = self.model.predict(x_new, steps = 1)
-            print(pred)
-            pat = pat.reshape((16384,1))
-            print("pred",pred.shape)
-            self.model.fit(x_new, pat, epochs=5, steps_per_epoch = 1)
-            """
-            for i in range(128):
-                pred = model.predict(x[i], steps = 1)
-                print("pred:",pred.shape)
-                model.fit(x[i], pat[i], epochs=1, steps_per_epoch = 128)
-                pat_pred[i] = pred
-                print(pred)
-            """
-            # elementwise multiply
-            print("int_rew shape",int_rew.shape)
-            print("ext rew bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", self.buf_ext_rews.shape)
+            x_test2 = tf.concat([x_test, ac_test], axis=-1)
+            #print("Input value concat ..x,ac..: ",x_new.shape)
+            #print("Output Dim of Patience Model: ", pat)
+            x_new = flatten_two_dims(x_new)
+            x_test2 = flatten_two_dims(x_test2)
+            # xnew 16384, 16384, 512+4 (train_examples, train_labels)
             
-            #int_rew = np.array(int_rew) * np.reshape(np.array(pred),(128,128))
+            pat = pat.reshape((16384,1))
+            train_dataset = tf.data.Dataset.from_tensor_slices((tf.stop_gradient(x_new),tf.stop_gradient(pat)))
+            test_dataset = tf.data.Dataset.from_tensor_slices((x_new,pat))
+            #pred_dataset = tf.data.Dataset.from_tensor_slices((x_test2))
+            BATCH_SIZE = 64
+            SHUFFLE_BUFFER_SIZE = 10
+
+            train_dataset = train_dataset.shuffle(SHUFFLE_BUFFER_SIZE).batch(BATCH_SIZE)
+            test_dataset = test_dataset.batch(BATCH_SIZE)
+            #pred_dataset = pred_dataset.batch(BATCH_SIZE)
+            #print("Train Dataset Shape : ", train_dataset.shape)
+            
+            self.model.compile(optimizer=keras.optimizers.Adam(learning_rate= 1e-4),loss='mean_absolute_error', metrics=['mean_absolute_error'])
+            # feat_list 128 x 128 x 512 action 128 x 128 x 4 hidsize 512
+            results = self.model.evaluate(test_dataset)
+            #print('test loss, test acc:', results)
+            
+            
+            #print("pred",pred)
+            #print("Input Dim for Patience Model: ", x_new.shape)
+            print("Output Dim of Patience Model: ", pat)
+            self.model.fit(train_dataset, epochs=20,workers = 4, verbose = 0)
+            print(self.model.summary())
+           # tf.keras.utils.plot_model(self.model, to_file="model.png",show_shapes=True,show_layer_names=True,rankdir="TB",dpi=96)
+            pred = self.model.predict(x_test2, steps = 1)
+            #print("pred shape:",pred.shape)
+            # elementwise multiply
+            #print("int_rew shape",int_rew.shape)
+            #print("ext rew bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", self.buf_ext_rews.shape)
+            
+            #print("pred:",np.reshape(np.array(pred),(128,128)))
+            int_rew = np.array(int_rew) * np.reshape(np.array(pred),(128,128))
             #int_rew = np.multiply(int_rew,pat_pred)
-            print(int_rew.shape)
+            #print(int_rew.shape)
+            self.flag2 = 1
         ################################################################################
-        
+
         self.buf_rews[:] = self.reward_fun(int_rew=int_rew, ext_rew=self.buf_ext_rews)
-        
+
 
     def rollout_step(self):
         t = self.step_count % self.nsteps
@@ -203,8 +244,6 @@ class Rollout(object):
                 self.buf_ext_rews[sli, t - 1] = prevrews
             # if t > 0:
             #     dyn_logp = self.policy.call_reward(prev_feat, pol_feat, prev_acs)
-            #
-            #     int_rew = dyn_logp.reshape(-1, )
             #
             #     self.int_rew[sli] = int_rew
             #     self.buf_rews[sli, t - 1] = self.reward_fun(ext_rew=prevrews, int_rew=int_rew)
@@ -287,3 +326,5 @@ class Rollout(object):
             else:
                 out = self.env_results[l]
         return out
+                                                                    
+

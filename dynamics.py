@@ -73,7 +73,7 @@ class Dynamics(object):
             #print("reward: ", tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1).shape)
             #####################################################
             # tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1), buf_ac
-        return tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1), self.features # 84 x 84 x 128 x128 int x: state prediction - non update next obs RMS -> reward : 128(pararellel thread) x 128(rollouts length)
+        return tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1), tf.stop_gradient(self.features) # 84 x 84 x 128 x128 int x: state prediction - non update next obs RMS -> reward : 128(pararellel thread) x 128(rollouts length)
         # return tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, -1), ps, self.features
 
     def calculate_loss(self, ob, last_ob, acs, feat_input, pat):
@@ -96,6 +96,11 @@ class Dynamics(object):
             ans_buf.append(ans)
             ac_buf.append(acs[sli(i)])
             feat_buf.append(feat)
+        """
+        if pat:
+            return tf.stop_gradient(np.concatenate(ans_buf,0)),tf.stop_gradient(np.concatenate(ac_buf,0)), tf.stop_gradient(np.concatenate(feat_buf,0))
+        else:
+        """
         return np.concatenate(ans_buf,0), np.concatenate(ac_buf,0), np.concatenate(feat_buf,0)
         
 class UNet(Dynamics):
@@ -131,3 +136,4 @@ class UNet(Dynamics):
             x = unflatten_first_dim(x, sh)
         self.prediction_pixels = x * self.ob_std + self.ob_mean
         return tf.reduce_mean((x - tf.stop_gradient(self.out_features)) ** 2, [2, 3, 4])
+
